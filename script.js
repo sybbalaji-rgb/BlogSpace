@@ -1,53 +1,25 @@
 /**
  * BlogSpace - Modern Personal & Tech Blog Website
- * Pure Vanilla JavaScript (Beginner-Friendly & Connected to Express API)
+ * Phase 7: Full Frontend Integration with Express Backend API
+ * Pure Vanilla JavaScript (Beginner-Friendly, Robust & Feature-Complete)
  */
 
 // Backend API Base URL
 const API_BASE_URL = 'http://localhost:5000/api';
 
-// Storage key for localStorage
-const STORAGE_KEY = 'blogspace_posts';
+// Storage keys for user authentication session
 const USER_KEY = 'blogspace_user';
+const TOKEN_KEY = 'blogspace_token';
 
 // Fallback cover image if user provides none or image fails to load
 const DEFAULT_IMAGE = 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=800&q=80';
 
-// Default initial sample posts (used if localStorage is completely empty)
-const INITIAL_POSTS = [
-  {
-    id: 'post-1',
-    title: 'The Future of Web Development with Modern CSS and JavaScript',
-    category: 'Technology',
-    author: 'Elena Vance',
-    image: 'https://images.unsplash.com/photo-1518770660439-4636190af475?auto=format&fit=crop&w=800&q=80',
-    content: `Web development continues to evolve at a blistering pace. With features like CSS Container Queries, CSS Grid subgrids, and native JavaScript ES modules, developers can build responsive, high-performance web applications without heavy frameworks.\n\nSimplicity and accessibility are becoming core priorities. Exploring pure vanilla stacks gives programmers deeper mastery over core browser capabilities and creates blisteringly fast loading speeds.`,
-    createdAt: 'Nov 18, 2026'
-  },
-  {
-    id: 'post-2',
-    title: 'Designing Aesthetic Dark & Purple User Interfaces',
-    category: 'Design',
-    author: 'Marcus Chen',
-    image: 'https://images.unsplash.com/photo-1550745165-9bc0b252726f?auto=format&fit=crop&w=800&q=80',
-    content: `Dark themes with rich purple accents provide high visual contrast and reduce eye fatigue. Purple represents creativity, mystery, and innovation.\n\nWhen creating dark UI designs, avoid pure pitch black (#000000). Instead, use dark slate or rich navy shades with subtle ambient violet glows. Add smooth micro-interactions to make your interfaces feel lively, tactile, and modern.`,
-    createdAt: 'Nov 20, 2026'
-  },
-  {
-    id: 'post-3',
-    title: '5 Daily Coding Habits That Will Level Up Your Career',
-    category: 'Coding',
-    author: 'Sarah Jenkins',
-    image: 'https://images.unsplash.com/photo-1498050108023-c5249f4df085?auto=format&fit=crop&w=800&q=80',
-    content: `Consistency is the secret superpower in software engineering. Setting aside just 30 to 45 minutes every day to explore documentation, review open source pull requests, or refactor existing code builds massive momentum over months.\n\nKeep notes on what you learn, build small side experiments, and celebrate each small milestone along the journey!`,
-    createdAt: 'Nov 22, 2026'
-  }
-];
-
-// State variables
+// In-memory state variables (sourced strictly from MongoDB)
+let posts = [];
 let currentCategory = 'all';
 let searchKeyword = '';
 let currentUser = null;
+let isLoadingBlogs = false;
 
 /* ==========================================================================
    DOM Elements
@@ -81,6 +53,7 @@ const registerForm = document.getElementById('registerForm');
 const registerNameInput = document.getElementById('registerName');
 const registerEmailInput = document.getElementById('registerEmail');
 const registerPasswordInput = document.getElementById('registerPassword');
+const submitRegisterBtn = document.getElementById('submitRegisterBtn');
 const switchToLoginLink = document.getElementById('switchToLoginLink');
 
 const loginModalOverlay = document.getElementById('loginModalOverlay');
@@ -89,6 +62,7 @@ const cancelLoginModalBtn = document.getElementById('cancelLoginModalBtn');
 const loginForm = document.getElementById('loginForm');
 const loginEmailInput = document.getElementById('loginEmail');
 const loginPasswordInput = document.getElementById('loginPassword');
+const submitLoginBtn = document.getElementById('submitLoginBtn');
 const switchToRegisterLink = document.getElementById('switchToRegisterLink');
 
 // Navigation auth controls
@@ -115,33 +89,8 @@ const navLinks = document.getElementById('navLinks');
 const currentYearSpan = document.getElementById('currentYear');
 
 /* ==========================================================================
-   Storage Helper Functions
+   Storage & Helper Functions
    ========================================================================== */
-
-/**
- * Fetch all posts from localStorage.
- * If empty, initializes with default sample posts.
- */
-function getPosts() {
-  const data = localStorage.getItem(STORAGE_KEY);
-  if (!data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(INITIAL_POSTS));
-    return [...INITIAL_POSTS];
-  }
-  try {
-    return JSON.parse(data);
-  } catch (err) {
-    console.error('Error parsing localStorage posts:', err);
-    return [];
-  }
-}
-
-/**
- * Save posts array to localStorage.
- */
-function savePosts(posts) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(posts));
-}
 
 /**
  * Formats a date string (e.g. "Nov 24, 2026")
@@ -175,6 +124,148 @@ function escapeHTML(str) {
 }
 
 /* ==========================================================================
+   API: Fetch All Blogs from MongoDB (GET /api/blogs)
+   ========================================================================== */
+
+/**
+ * Fetches all blogs directly from MongoDB via the backend API.
+ * Handles loading, empty database, and API error states without fake fallback data.
+ */
+async function fetchBlogs() {
+  isLoadingBlogs = true;
+
+  // Display loading state
+  postsContainer.innerHTML = `
+    <div class="posts-loading" style="grid-column: 1 / -1; text-align: center; padding: 3rem 1rem;">
+      <div class="spinner"></div>
+      <p style="margin-top: 1rem; color: var(--text-muted);">Fetching articles from MongoDB Atlas...</p>
+    </div>
+  `;
+  emptyState.classList.add('hidden');
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/blogs`);
+
+    if (!response.ok) {
+      throw new Error(`Server returned status ${response.status}`);
+    }
+
+    const data = await response.json();
+    const fetchedBlogs = Array.isArray(data) ? data : (data.blogs || []);
+
+    if (fetchedBlogs.length > 0) {
+      // Normalize posts directly from MongoDB documents
+      posts = fetchedBlogs.map(b => ({
+        id: b._id ? b._id.toString() : (b.id ? b.id.toString() : Date.now().toString()),
+        title: b.title || 'Untitled Post',
+        author: b.author || 'Anonymous',
+        category: b.category || 'General',
+        content: b.content || '',
+        image: b.image && b.image.trim() !== '' ? b.image : DEFAULT_IMAGE,
+        createdAt: b.createdAt ? new Date(b.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : getCurrentFormattedDate()
+      }));
+    } else {
+      // Database has no blogs yet
+      posts = [];
+    }
+    renderPosts();
+  } catch (error) {
+    console.error('API GET /api/blogs failed:', error);
+    posts = [];
+    postsContainer.innerHTML = `
+      <div class="empty-state" style="grid-column: 1 / -1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3rem 1rem; text-align: center;">
+        <div class="empty-icon">⚠️</div>
+        <h3>Unable to Load Blogs from Database</h3>
+        <p style="color: var(--text-muted); margin: 0.5rem 0 1.5rem; max-width: 480px;">
+          Could not retrieve articles from the backend API. Please make sure the server is running on http://localhost:5000 and connected to MongoDB Atlas.
+        </p>
+        <button class="btn btn-primary" onclick="fetchBlogs()">
+          <span>↻ Retry Connection</span>
+        </button>
+      </div>
+    `;
+    emptyState.classList.add('hidden');
+  } finally {
+    isLoadingBlogs = false;
+  }
+}
+
+/* ==========================================================================
+   API: Fetch Single Blog by MongoDB ID (GET /api/blogs/:id)
+   ========================================================================== */
+
+/**
+ * Fetches and displays individual blog details in the reading view modal directly from MongoDB.
+ */
+async function openReadModal(id) {
+  // Open modal with loading spinner
+  readModalContent.innerHTML = `
+    <div class="posts-loading" style="padding: 3rem 1rem; text-align: center;">
+      <div class="spinner"></div>
+      <p style="margin-top: 1rem; color: var(--text-muted);">Loading article from MongoDB...</p>
+    </div>
+  `;
+  readModalOverlay.classList.remove('hidden');
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/blogs/${id}`);
+    if (!response.ok) {
+      if (response.status === 404) {
+        throw new Error('Blog post not found in database.');
+      } else if (response.status === 400) {
+        throw new Error('Invalid blog ID format.');
+      }
+      throw new Error(`Server returned status ${response.status}`);
+    }
+
+    const serverBlog = await response.json();
+    const displayImage = serverBlog.image && serverBlog.image.trim() !== '' ? serverBlog.image : DEFAULT_IMAGE;
+    const formattedDate = serverBlog.createdAt
+      ? new Date(serverBlog.createdAt).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+      : getCurrentFormattedDate();
+
+    readModalContent.innerHTML = `
+      <img class="read-modal-image" src="${escapeHTML(displayImage)}" alt="${escapeHTML(serverBlog.title)}" onerror="this.onerror=null; this.src='${DEFAULT_IMAGE}';">
+      <div class="read-modal-header">
+        <span class="read-modal-badge">${escapeHTML(serverBlog.category || 'General')}</span>
+        <h2 class="read-modal-title">${escapeHTML(serverBlog.title)}</h2>
+        <div class="read-modal-meta">
+          <span>By <strong>${escapeHTML(serverBlog.author || 'Anonymous')}</strong></span>
+          <span>•</span>
+          <span>${escapeHTML(formattedDate)}</span>
+          <span>•</span>
+          <span>${calcReadTime(serverBlog.content)} min read</span>
+        </div>
+      </div>
+      <div class="read-modal-body">
+        ${escapeHTML(serverBlog.content)}
+      </div>
+      <div style="margin-top: 2rem; border-top: 1px solid var(--purple-border, #2d2254); padding-top: 1.5rem; display: flex; justify-content: flex-end;">
+        <button class="btn btn-secondary" id="readModalBackBtn" onclick="closeReadModal()">← Back to Articles</button>
+      </div>
+    `;
+  } catch (err) {
+    console.error(`Error loading blog details for ID ${id}:`, err);
+    readModalContent.innerHTML = `
+      <div class="empty-state" style="padding: 3rem 1rem; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center;">
+        <div class="empty-icon">🔍</div>
+        <h3>Article Details Unavailable</h3>
+        <p style="color: var(--text-muted); margin: 0.5rem 0 1.5rem;">${escapeHTML(err.message || 'Could not load article from database.')}</p>
+        <button class="btn btn-secondary" onclick="closeReadModal()">← Back to Articles</button>
+      </div>
+    `;
+  }
+}
+
+/**
+ * Close Read Full Post Modal
+ */
+function closeReadModal() {
+  readModalOverlay.classList.add('hidden');
+  readModalContent.innerHTML = '';
+}
+
+/* ==========================================================================
    Render Functions
    ========================================================================== */
 
@@ -182,10 +273,10 @@ function escapeHTML(str) {
  * Render blog posts grid based on category and search filters
  */
 function renderPosts() {
-  const allPosts = getPosts();
+  if (isLoadingBlogs) return;
 
   // Filter by category
-  let filtered = allPosts;
+  let filtered = posts;
   if (currentCategory !== 'all') {
     filtered = filtered.filter(p => p.category && p.category.toLowerCase() === currentCategory.toLowerCase());
   }
@@ -246,11 +337,12 @@ function renderPosts() {
       </div>
     `;
 
-    // Click on card title or image opens full article view
-    const titleElem = card.querySelector('.card-title');
-    const imageWrap = card.querySelector('.card-image-wrap');
-    titleElem.addEventListener('click', () => openReadModal(post.id));
-    imageWrap.addEventListener('click', () => openReadModal(post.id));
+    // Make entire card clickable to open full article view via GET /api/blogs/:id
+    card.addEventListener('click', (e) => {
+      // Do not open reading view if Edit or Delete button was clicked
+      if (e.target.closest('[data-action]')) return;
+      openReadModal(post.id);
+    });
 
     // Handle Edit / Delete clicks
     const editBtn = card.querySelector('[data-action="edit"]');
@@ -336,7 +428,7 @@ function closeLoginModal() {
 }
 
 /**
- * Handle Registration via POST /api/register
+ * Task 1: Connect Registration Form to Register API (POST /api/auth/register)
  */
 async function handleRegisterSubmit(e) {
   e.preventDefault();
@@ -350,34 +442,65 @@ async function handleRegisterSubmit(e) {
     return;
   }
 
+  // Button loading state
+  if (submitRegisterBtn) {
+    submitRegisterBtn.disabled = true;
+    submitRegisterBtn.textContent = 'Registering...';
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/register`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ name, email, password })
-    });
+    let response;
+    // Primary route: /api/auth/register, with automatic fallback to /api/register
+    try {
+      response = await fetch(`${API_BASE_URL}/auth/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password })
+      });
+      if (response.status === 404) {
+        response = await fetch(`${API_BASE_URL}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name, email, password })
+        });
+      }
+    } catch (netErr) {
+      response = await fetch(`${API_BASE_URL}/register`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password })
+      });
+    }
 
     const data = await response.json();
 
     if (response.ok) {
+      if (data.token) {
+        localStorage.setItem(TOKEN_KEY, data.token);
+      }
+      if (data.user) {
+        currentUser = data.user;
+        localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
+        updateAuthUI();
+      }
       showToast(data.message || 'Registration successful!');
       closeRegisterModal();
-      openLoginModal();
-      // Pre-fill email in login modal
-      loginEmailInput.value = email;
     } else {
       showToast(data.message || 'Registration failed.', true);
     }
   } catch (error) {
     console.error('Registration API Error:', error);
-    showToast('Unable to reach server. Please ensure backend is running.', true);
+    showToast('Unable to reach backend server at http://localhost:5000', true);
+  } finally {
+    if (submitRegisterBtn) {
+      submitRegisterBtn.disabled = false;
+      submitRegisterBtn.textContent = 'Register';
+    }
   }
 }
 
 /**
- * Handle Login via POST /api/login
+ * Task 2: Connect Login Form to Login API (POST /api/auth/login)
  */
 async function handleLoginSubmit(e) {
   e.preventDefault();
@@ -390,29 +513,58 @@ async function handleLoginSubmit(e) {
     return;
   }
 
+  // Button loading state
+  if (submitLoginBtn) {
+    submitLoginBtn.disabled = true;
+    submitLoginBtn.textContent = 'Logging in...';
+  }
+
   try {
-    const response = await fetch(`${API_BASE_URL}/login`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ email, password })
-    });
+    let response;
+    // Primary route: /api/auth/login, with automatic fallback to /api/login
+    try {
+      response = await fetch(`${API_BASE_URL}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+      if (response.status === 404) {
+        response = await fetch(`${API_BASE_URL}/login`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, password })
+        });
+      }
+    } catch (netErr) {
+      response = await fetch(`${API_BASE_URL}/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+      });
+    }
 
     const data = await response.json();
 
     if (response.ok) {
+      if (data.token) {
+        localStorage.setItem(TOKEN_KEY, data.token);
+      }
       currentUser = data.user;
       localStorage.setItem(USER_KEY, JSON.stringify(currentUser));
       updateAuthUI();
       closeLoginModal();
-      showToast(data.message || `Welcome, ${currentUser.name}!`);
+      showToast(data.message || `Welcome back, ${currentUser.name}!`);
     } else {
-      showToast(data.message || 'Invalid credentials.', true);
+      showToast(data.message || 'Invalid email or password.', true);
     }
   } catch (error) {
     console.error('Login API Error:', error);
-    showToast('Unable to reach server. Please ensure backend is running.', true);
+    showToast('Unable to reach backend server at http://localhost:5000', true);
+  } finally {
+    if (submitLoginBtn) {
+      submitLoginBtn.disabled = false;
+      submitLoginBtn.textContent = 'Login';
+    }
   }
 }
 
@@ -421,19 +573,27 @@ async function handleLoginSubmit(e) {
  */
 function handleLogout() {
   currentUser = null;
+  localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
   updateAuthUI();
   showToast('Logged out successfully.');
 }
 
 /* ==========================================================================
-   CRUD Operations & Blog Creation API
+   CRUD Operations & Blog Creation API (POST /api/blogs)
    ========================================================================== */
 
 /**
- * Open Modal in "Create Post" mode
+ * Open Modal in "Create Post" mode (Requires Authentication)
  */
 function openCreateModal() {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) {
+    showToast('Please login to create a blog post.', true);
+    openLoginModal();
+    return;
+  }
+
   postForm.reset();
   postIdInput.value = '';
   modalTitle.textContent = 'Create New Blog Post';
@@ -452,8 +612,7 @@ function openCreateModal() {
  * Open Modal in "Edit Post" mode and pre-populate values
  */
 function openEditModal(id) {
-  const posts = getPosts();
-  const post = posts.find(p => p.id === id);
+  const post = posts.find(p => p.id === id.toString());
   if (!post) return;
 
   postIdInput.value = post.id;
@@ -480,46 +639,7 @@ function closePostModal() {
 }
 
 /**
- * Open Read Full Post Modal
- */
-function openReadModal(id) {
-  const posts = getPosts();
-  const post = posts.find(p => p.id === id);
-  if (!post) return;
-
-  const displayImage = post.image && post.image.trim() !== '' ? post.image : DEFAULT_IMAGE;
-
-  readModalContent.innerHTML = `
-    <img class="read-modal-image" src="${escapeHTML(displayImage)}" alt="${escapeHTML(post.title)}" onerror="this.onerror=null; this.src='${DEFAULT_IMAGE}';">
-    <div class="read-modal-header">
-      <span class="read-modal-badge">${escapeHTML(post.category)}</span>
-      <h2 class="read-modal-title">${escapeHTML(post.title)}</h2>
-      <div class="read-modal-meta">
-        <span>By <strong>${escapeHTML(post.author)}</strong></span>
-        <span>•</span>
-        <span>${escapeHTML(post.createdAt || 'Recent')}</span>
-        <span>•</span>
-        <span>${calcReadTime(post.content)} min read</span>
-      </div>
-    </div>
-    <div class="read-modal-body">
-      ${escapeHTML(post.content)}
-    </div>
-  `;
-
-  readModalOverlay.classList.remove('hidden');
-}
-
-/**
- * Close Read Full Post Modal
- */
-function closeReadModal() {
-  readModalOverlay.classList.add('hidden');
-  readModalContent.innerHTML = '';
-}
-
-/**
- * Handle form submit (Both API Create and Local Edit)
+ * Task 3: Connect Create Blog Form to Create-Blog API (POST /api/blogs)
  */
 async function handleFormSubmit(e) {
   e.preventDefault();
@@ -536,104 +656,157 @@ async function handleFormSubmit(e) {
     return;
   }
 
-  const posts = getPosts();
+  // Check authentication token before sending
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) {
+    showToast('Please login to create or edit a blog post.', true);
+    openLoginModal();
+    return;
+  }
 
-  // If editing existing post locally
+  // Button loading state
+  if (savePostBtn) {
+    savePostBtn.disabled = true;
+    savePostBtn.textContent = editingId ? 'Updating...' : 'Publishing...';
+  }
+
+  // Handle Edit of existing post in MongoDB (PUT /api/blogs/:id)
   if (editingId) {
-    const index = posts.findIndex(p => p.id === editingId);
-    if (index !== -1) {
-      posts[index] = {
-        ...posts[index],
-        title,
-        category,
-        author,
-        image: image || posts[index].image || DEFAULT_IMAGE,
-        content
-      };
-      savePosts(posts);
-      showToast('Blog post updated successfully!');
-      closePostModal();
-      renderPosts();
+    try {
+      const response = await fetch(`${API_BASE_URL}/blogs/${editingId}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          title,
+          category,
+          author,
+          image: image || DEFAULT_IMAGE,
+          content
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.status === 401) {
+        showToast(data.message || 'Session expired. Please login again.', true);
+        handleLogout();
+        openLoginModal();
+        return;
+      }
+
+      if (response.ok) {
+        showToast(data.message || 'Blog updated in MongoDB!');
+        closePostModal();
+        await fetchBlogs();
+      } else {
+        showToast(data.message || 'Failed to update blog in database.', true);
+      }
+    } catch (error) {
+      console.error('Update Blog API Error:', error);
+      showToast('Unable to reach backend server to update blog.', true);
+    } finally {
+      if (savePostBtn) {
+        savePostBtn.disabled = false;
+        savePostBtn.textContent = 'Publish Post';
+      }
     }
     return;
   }
 
-  // Creating new post -> Call POST /api/blogs via fetch()
+  // Creating new post -> Call POST /api/blogs with JWT Authorization header
   try {
     const response = await fetch(`${API_BASE_URL}/blogs`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
       },
       body: JSON.stringify({
         title,
         author,
         category,
-        content
+        content,
+        image: image || DEFAULT_IMAGE
       })
     });
 
     const data = await response.json();
 
-    if (response.ok) {
-      // Backend returned created blog object
-      const newPost = {
-        id: 'post-' + (data.blog ? data.blog.id : Date.now()),
-        title: data.blog ? data.blog.title : title,
-        category: data.blog ? data.blog.category : category,
-        author: data.blog ? data.blog.author : author,
-        image: image || DEFAULT_IMAGE,
-        content: data.blog ? data.blog.content : content,
-        createdAt: getCurrentFormattedDate()
-      };
+    if (response.status === 401) {
+      showToast(data.message || 'Session expired. Please login again.', true);
+      handleLogout();
+      openLoginModal();
+      return;
+    }
 
-      posts.unshift(newPost);
-      savePosts(posts);
-      showToast(data.message || 'Blog created successfully!');
+    if (response.ok) {
+      showToast(data.message || 'Blog saved to MongoDB!');
       closePostModal();
-      renderPosts();
+      await fetchBlogs();
     } else {
-      showToast(data.message || 'Failed to create blog.', true);
+      showToast(data.message || 'Failed to create blog in database.', true);
     }
   } catch (error) {
     console.error('Create Blog API Error:', error);
-    // Graceful fallback to local creation if backend server is unreachable
-    const fallbackPost = {
-      id: 'post-' + Date.now(),
-      title,
-      category,
-      author,
-      image: image || DEFAULT_IMAGE,
-      content,
-      createdAt: getCurrentFormattedDate()
-    };
-    posts.unshift(fallbackPost);
-    savePosts(posts);
-    showToast('Server offline: Blog saved locally!');
-    closePostModal();
-    renderPosts();
+    showToast('Unable to reach backend server. Blog was not saved.', true);
+  } finally {
+    if (savePostBtn) {
+      savePostBtn.disabled = false;
+      savePostBtn.textContent = 'Publish Post';
+    }
   }
 }
 
 /**
- * Delete a post with confirmation
+ * Delete a post from MongoDB via DELETE /api/blogs/:id
  */
-function deletePost(id) {
-  const isConfirmed = confirm('Are you sure you want to delete this blog post? This action cannot be undone.');
+async function deletePost(id) {
+  const token = localStorage.getItem(TOKEN_KEY);
+  if (!token) {
+    showToast('Please login to delete blog posts.', true);
+    openLoginModal();
+    return;
+  }
+
+  const isConfirmed = confirm('Are you sure you want to delete this blog post from MongoDB? This action cannot be undone.');
   if (!isConfirmed) return;
 
-  let posts = getPosts();
-  posts = posts.filter(p => p.id !== id);
-  savePosts(posts);
-  showToast('Blog post deleted.');
-  renderPosts();
+  try {
+    const response = await fetch(`${API_BASE_URL}/blogs/${id}`, {
+      method: 'DELETE',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+
+    const data = await response.json();
+
+    if (response.status === 401) {
+      showToast(data.message || 'Session expired. Please login again.', true);
+      handleLogout();
+      openLoginModal();
+      return;
+    }
+
+    if (response.ok) {
+      showToast(data.message || 'Blog deleted from database.');
+      await fetchBlogs();
+    } else {
+      showToast(data.message || 'Failed to delete blog from database.', true);
+    }
+  } catch (error) {
+    console.error('Delete Blog API Error:', error);
+    showToast('Unable to reach backend server to delete blog.', true);
+  }
 }
 
 /**
- * User-friendly temporary toast notification (Supports Success & Error)
+ * Task 6: Display Proper Success and Error Messages
  */
 function showToast(message, isError = false) {
-  // Remove existing toast if present
   const existing = document.querySelector('.toast-notification');
   if (existing) existing.remove();
 
@@ -648,7 +821,7 @@ function showToast(message, isError = false) {
     toast.style.opacity = '0';
     toast.style.transform = 'translateY(15px)';
     setTimeout(() => toast.remove(), 400);
-  }, 3000);
+  }, 3200);
 }
 
 /* ==========================================================================
@@ -671,8 +844,8 @@ document.addEventListener('DOMContentLoaded', () => {
     currentYearSpan.textContent = new Date().getFullYear();
   }
 
-  // Initial render
-  renderPosts();
+  // Fetch blogs from backend API (Task 4 & 7: Loading states & empty list handling)
+  fetchBlogs();
 
   // Create post modal triggers
   if (openCreateModalBtn) openCreateModalBtn.addEventListener('click', openCreateModal);
