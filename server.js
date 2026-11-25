@@ -31,17 +31,42 @@ app.use(express.json());
 // Email validation helper regex
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// Serve frontend static files (HTML, CSS, JS)
-const path = require("path");
-app.use(express.static(path.join(__dirname)));
-
-// API health check
+// API health check (responds immediately to verify backend status and DB connection state)
 app.get("/api/health", (req, res) => {
-    res.json({ status: "ok", message: "BlogSpace Backend is Running!" });
+    res.status(200).json({
+        status: "ok",
+        message: "BlogSpace Backend is Running!",
+        database: mongoose.connection.readyState === 1 ? "connected" : "disconnected"
+    });
 });
+
+// Ensure MongoDB is connected for data API requests (Serverless & Local)
+app.use(async (req, res, next) => {
+    if (req.path.startsWith("/api")) {
+        try {
+            await connectDB();
+            next();
+        } catch (err) {
+            console.error("Database connection middleware error:", err.message);
+            return res.status(500).json({ message: "Database connection error" });
+        }
+    } else {
+        next();
+    }
+});
+
+// Serve frontend static files (HTML, CSS, JS) from public directory with root fallback
+const path = require("path");
+const fs = require("fs");
+app.use(express.static(path.join(__dirname, "public")));
+app.use(express.static(path.join(__dirname)));
 
 // Home route - serve index.html
 app.get("/", (req, res) => {
+    const publicIndex = path.join(__dirname, "public", "index.html");
+    if (fs.existsSync(publicIndex)) {
+        return res.sendFile(publicIndex);
+    }
     res.sendFile(path.join(__dirname, "index.html"));
 });
 

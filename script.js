@@ -5,7 +5,10 @@
  */
 
 // Backend API Base URL
-const API_BASE_URL = 'http://localhost:5000/api';
+// Supports same-origin /api in deployed environments (Vercel) and localhost server, with fallback for standalone file:// browsing
+const API_BASE_URL = (typeof window !== 'undefined' && window.location && window.location.protocol.startsWith('http'))
+  ? '/api'
+  : 'http://localhost:5000/api';
 
 // Storage keys for user authentication session
 const USER_KEY = 'blogspace_user';
